@@ -7,10 +7,73 @@ Accept: application/json
   "usuario": "usuario-demo",
   "entorno": "dev",
   "html": "<html><body><h1>PDF</h1></body></html>",
-  "json": {
-    "titulo": "Documento de prueba"
-  }
+  "paper_size": "A4",
+  "orientation": "portrait"
 }
+
+###
+# Payload de negocio recibido desde otro microservicio.
+POST https://service-pdf.localhost/generate
+Content-Type: application/json
+Accept: application/json
+
+{
+  "tenant": "tenant-demo",
+  "usuario": "usuario-demo",
+  "entorno": "dev",
+  "paper_size": "LETTER",
+  "orientation": "portrait",
+  "json": {
+    "empresa": {
+      "nombre": "Tech Solutions S.A.S",
+      "nit": "900.000.000-1",
+      "telefono": "+57 300 123 4567"
+    },
+    "cotizacion_nro": "COT-2026-075",
+    "fecha": "2026-07-07",
+    "cliente": {
+      "nombre": "Desarrollos y Proyectos LTDA",
+      "nit": "800.123.456-7",
+      "direccion": "Calle Principal # 45-67, Edificio Centro"
+    },
+    "items": [
+      {
+        "descripcion": "Implementación de arquitectura de microservicios",
+        "cantidad": 1,
+        "precio_unitario": 2500000,
+        "total": 2500000
+      },
+      {
+        "descripcion": "Horas de consultoría y optimización de base de datos",
+        "cantidad": 10,
+        "precio_unitario": 120000,
+        "total": 1200000
+      }
+    ],
+    "subtotal": 3700000,
+    "impuesto": 703000,
+    "total": 4403000
+  },
+  "html": "<!DOCTYPE html><html lang=\"es\"><head><meta charset=\"UTF-8\"><title>Cotización</title><style>body { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: 12px; color: #333; } .header { width: 100%; margin-bottom: 30px; border-bottom: 2px solid #2c3e50; padding-bottom: 10px; } .header table { width: 100%; } .header td { vertical-align: top; } .company-name { font-size: 20px; font-weight: bold; color: #2c3e50; } .quote-title { font-size: 24px; text-align: right; color: #555; } .client-info { margin-bottom: 30px; } .client-info strong { color: #2c3e50; } .items-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; } .items-table th, .items-table td { border: 1px solid #ddd; padding: 8px; text-align: left; } .items-table th { background-color: #f8f9fa; font-weight: bold; color: #333; } .text-right { text-align: right; } .totals { width: 100%; } .totals table { width: 40%; float: right; border-collapse: collapse; } .totals th, .totals td { padding: 6px; border-bottom: 1px solid #ddd; } .totals th { text-align: left; background-color: #f8f9fa; } .footer { text-align: center; font-size: 10px; color: #777; margin-top: 50px; border-top: 1px solid #ddd; padding-top: 10px; clear: both; }</style></head><body><div class=\"header\"><table><tr><td><div class=\"company-name\">{{ empresa.nombre }}</div><div>NIT: {{ empresa.nit }}</div><div>{{ empresa.telefono }}</div></td><td class=\"quote-title\">COTIZACIÓN<br><span style=\"font-size: 14px; color: #777;\"># {{ cotizacion_nro }}</span><br><span style=\"font-size: 12px; color: #777;\">Fecha: {{ fecha }}</span></td></tr></table></div><div class=\"client-info\"><strong>Preparado para:</strong><br>{{ cliente.nombre }}<br>NIT: {{ cliente.nit }}<br>{{ cliente.direccion }}</div><table class=\"items-table\"><thead><tr><th>Descripción</th><th class=\"text-right\">Cant.</th><th class=\"text-right\">Vr. Unitario</th><th class=\"text-right\">Total</th></tr></thead><tbody>{% for item in items %}<tr><td>{{ item.descripcion }}</td><td class=\"text-right\">{{ item.cantidad }}</td><td class=\"text-right\">${{ item.precio_unitario|number_format(0, ',', '.') }}</td><td class=\"text-right\">${{ item.total|number_format(0, ',', '.') }}</td></tr>{% endfor %}</tbody></table><div class=\"totals\"><table><tr><th>Subtotal</th><td class=\"text-right\">${{ subtotal|number_format(0, ',', '.') }}</td></tr><tr><th>IVA (19%)</th><td class=\"text-right\">${{ impuesto|number_format(0, ',', '.') }}</td></tr><tr><th>Total</th><td class=\"text-right\"><strong>${{ total|number_format(0, ',', '.') }}</strong></td></tr></table></div><div class=\"footer\">Este documento es una cotización formal. Válida por 30 días calendario.</div></body></html>"
+}
+
+###
+# Consulta de keys por usuario y entorno.
+POST https://service-pdf.localhost/keys
+Content-Type: application/json
+Accept: application/json
+
+{
+  "tenant": "tenant-demo",
+  "usuario": "usuario-demo",
+  "entorno": "dev",
+  "limit": 10
+}
+
+###
+# URLs firmadas por tenant y entorno.
+GET https://service-pdf.localhost/signed-urls?tenant=tenant-demo&entorno=dev&limit=10
+Accept: application/json
 
 ###
 # Vista HTML de una referencia existente.

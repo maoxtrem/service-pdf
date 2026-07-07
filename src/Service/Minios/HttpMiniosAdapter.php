@@ -36,6 +36,44 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
         return $this->buildPresignedGetUrl($this->minioPublicEndpoint, $bucketName, $objectKey, $expiresInSeconds);
     }
 
+    public function downloadObject(string $bucket, string $objectKey): array
+    {
+        $bucketName = $bucket !== '' ? $bucket : $this->minioBucket;
+        $url = $this->buildPresignedGetUrl($this->minioPublicEndpoint, $bucketName, $objectKey, 300);
+
+        try {
+            $response = $this->httpClient->request('GET', $url, [
+                'verify_peer' => $this->minioVerifySsl,
+                'verify_host' => $this->minioVerifySsl,
+            ]);
+
+            $statusCode = $response->getStatusCode();
+            $headers = $response->getHeaders(false);
+            $content = $response->getContent(false);
+
+            if ($statusCode < 200 || $statusCode >= 300) {
+                return $this->normalizeResponse($statusCode, $headers, $content);
+            }
+
+            return [
+                'ok' => true,
+                'status_code' => $statusCode,
+                'headers' => $headers,
+                'body' => $content,
+                'content_type' => $headers['content-type'][0] ?? 'application/pdf',
+            ];
+        } catch (Throwable $e) {
+            return [
+                'ok' => false,
+                'status_code' => 502,
+                'body' => [
+                    'error' => 'No fue posible descargar el PDF desde MinIO/S3.',
+                    'details' => $e->getMessage(),
+                ],
+            ];
+        }
+    }
+
     private function buildObjectUrl(string $baseUrl, string $bucket, string $objectKey): string
     {
         $parsed = parse_url($baseUrl);

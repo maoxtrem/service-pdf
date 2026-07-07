@@ -2,15 +2,20 @@
 
 namespace App\Service\Pdf;
 
+use App\Entity\PdfDocument;
+use App\Repository\PdfDocumentRepository;
 use App\Service\Minios\MiniosAdapterInterface;
+use Doctrine\ORM\EntityManagerInterface;
 
 final class PdfService
 {
     public function __construct(
         private readonly PdfHtmlValidator $htmlValidator,
         private readonly PdfReferenceGenerator $referenceGenerator,
+        private readonly PdfObjectKeyGenerator $objectKeyGenerator,
         private readonly PdfDocumentBuilder $documentBuilder,
-        private readonly PdfJobStorage $jobStorage,
+        private readonly PdfDocumentRepository $pdfDocumentRepository,
+        private readonly EntityManagerInterface $entityManager,
         private readonly MiniosAdapterInterface $miniosAdapter,
         private readonly string $minioBucket,
         private readonly int $minioUrlExpirationHours,
@@ -19,7 +24,7 @@ final class PdfService
 
     public function generate(array $payload): array
     {
-        $requiredFields = ['tenant', 'usuario', 'entorno', 'html', 'json'];
+        $requiredFields = ['tenant', 'usuario', 'entorno', 'html'];
         $missingFields = [];
 
         foreach ($requiredFields as $field) {
@@ -59,34 +64,56 @@ final class PdfService
             ];
         }
 
-        $htmlValidation = $this->htmlValidator->validate($payload['html']);
-
-        if (!$htmlValidation['valid']) {
+        if (array_key_exists('json', $payload) && !is_array($payload['json'])) {
             return [
                 'ok' => false,
                 'status_code' => 400,
                 'body' => [
-                    'error' => 'El campo "html" no contiene HTML válido.',
-                    'details' => $htmlValidation['errors'],
-                ],
-            ];
-        }
-
-        if (!is_array($payload['json'])) {
-            return [
-                'ok' => false,
-                'status_code' => 400,
-                'body' => [
-                    'error' => 'El campo "json" debe ser un objeto JSON.',
+                    'error' => 'El campo "json" debe ser un objeto JSON cuando se envía.',
                 ],
             ];
         }
 
         $referenceData = $this->referenceGenerator->generate();
         $reference = $referenceData['value'];
-        $pdfBinary = $this->documentBuilder->build($payload, $reference);
+        $jsonData = is_array($payload['json'] ?? null) ? $payload['json'] : [];
+        $objectKey = $this->objectKeyGenerator->generate();
+
+        try {
+            $context = $this->documentBuilder->buildContext($jsonData);
+            $renderedHtml = $this->documentBuilder->renderTemplate(
+                (string) $payload['html'],
+                $context
+            );
+            $htmlValidation = $this->htmlValidator->validate($renderedHtml);
+
+            if (!$htmlValidation['valid']) {
+                return [
+                    'ok' => false,
+                    'status_code' => 400,
+                    'body' => [
+                        'error' => 'El HTML renderizado no es válido.',
+                        'details' => $htmlValidation['errors'],
+                    ],
+                ];
+            }
+
+            $payloadForPdf = $payload;
+            $payloadForPdf['html'] = $renderedHtml;
+            $payloadForPdf['json'] = $jsonData;
+
+            $pdfBinary = $this->documentBuilder->buildFromHtml($renderedHtml, $payloadForPdf);
+        } catch (\Throwable $exception) {
+            return [
+                'ok' => false,
+                'status_code' => 400,
+                'body' => [
+                    'error' => 'No se pudo renderizar la plantilla Twig.',
+                    'details' => $exception->getMessage(),
+                ],
+            ];
+        }
         $bucket = $this->minioBucket;
-        $objectKey = $reference;
 
         $uploadResult = $this->miniosAdapter->putObject($bucket, $objectKey, $pdfBinary, 'application/pdf');
         $pdfUrl = $this->miniosAdapter->temporaryObjectUrl($bucket, $objectKey, $this->minioUrlExpirationHours);
@@ -98,47 +125,47 @@ final class PdfService
             'body' => $uploadResult['body'] ?? [],
         ];
 
-        $job = [
-            'reference' => $reference,
-            'reference_hex' => $referenceData['hex'],
-            'reference_uuid' => $referenceData['uuid'],
-            'tenant' => $payload['tenant'],
-            'usuario' => $payload['usuario'],
-            'entorno' => $payload['entorno'],
-            'html' => $payload['html'],
-            'json' => $payload['json'],
-            'object_key' => $objectKey,
-            'bucket' => $bucket,
-            'pdf_url' => $pdfUrl,
-            'pdf_url_expires_in_hours' => $this->minioUrlExpirationHours,
-            'minios' => $miniosContext,
-            'created_at' => (new \DateTimeImmutable())->format(DATE_ATOM),
-            'status' => $miniosContext['ok'] ? 'stored' : 'failed',
-        ];
-
-        $this->jobStorage->store($reference, $job);
-
         if (!$miniosContext['ok']) {
             return [
                 'ok' => false,
                 'status_code' => 502,
                 'body' => [
                     'error' => 'No fue posible guardar el PDF en MinIO.',
-                    'reference' => $reference,
-                    'reference_hex' => $referenceData['hex'],
-                    'reference_uuid' => $referenceData['uuid'],
                     'pdf_url' => $pdfUrl,
                     'pdf_url_expires_in_hours' => $this->minioUrlExpirationHours,
-                    'object_key' => $objectKey,
-                    'bucket' => $bucket,
-                    'minios' => $miniosContext,
-                    'data' => [
-                        'tenant' => $payload['tenant'],
-                        'usuario' => $payload['usuario'],
-                        'entorno' => $payload['entorno'],
-                        'html_length' => strlen($payload['html']),
-                        'json_keys' => array_keys($payload['json']),
-                    ],
+                    'tenant' => $payload['tenant'],
+                    'usuario' => $payload['usuario'],
+                    'entorno' => $payload['entorno'],
+                ],
+            ];
+        }
+
+        try {
+            $document = new PdfDocument(
+                $reference,
+                $referenceData['uuid'],
+                (string) $payload['tenant'],
+                (string) $payload['usuario'],
+                (string) $payload['entorno'],
+                $jsonData,
+                $objectKey,
+                $bucket,
+            );
+            $document->markProcessed();
+
+            $this->entityManager->persist($document);
+            $this->entityManager->flush();
+        } catch (\Throwable $exception) {
+            return [
+                'ok' => false,
+                'status_code' => 500,
+                'body' => [
+                    'error' => 'El PDF fue guardado en MinIO, pero no se pudo registrar en la base de datos.',
+                    'pdf_url' => $pdfUrl,
+                    'pdf_url_expires_in_hours' => $this->minioUrlExpirationHours,
+                    'tenant' => $payload['tenant'],
+                    'usuario' => $payload['usuario'],
+                    'entorno' => $payload['entorno'],
                 ],
             ];
         }
@@ -149,61 +176,154 @@ final class PdfService
             'body' => [
                 'status' => 'stored',
                 'message' => 'Payload recibido correctamente. El PDF fue generado y guardado en MinIO.',
-                'reference' => $reference,
-                'reference_hex' => $referenceData['hex'],
-                'reference_uuid' => $referenceData['uuid'],
+                'tenant' => $payload['tenant'],
+                'usuario' => $payload['usuario'],
+                'entorno' => $payload['entorno'],
                 'pdf_url' => $pdfUrl,
                 'pdf_url_expires_in_hours' => $this->minioUrlExpirationHours,
-                'object_key' => $objectKey,
-                'bucket' => $bucket,
-                'minios' => $miniosContext,
-                'data' => [
-                    'tenant' => $payload['tenant'],
-                    'usuario' => $payload['usuario'],
-                    'entorno' => $payload['entorno'],
-                    'html_length' => strlen($payload['html']),
-                    'json_keys' => array_keys($payload['json']),
-                ],
             ],
         ];
     }
 
-    public function resolve(string $reference): array
+    public function resolve(string $identifier): array
     {
-        if (!$this->isValidReference($reference)) {
-            return [
-                'ok' => false,
-                'status_code' => 400,
-                'body' => [
-                    'error' => 'Referencia inválida.',
-                ],
-            ];
-        }
+        $document = $this->findDocumentByIdentifier($identifier);
 
-        $job = $this->jobStorage->load($reference);
-
-        if ($job === null) {
+        if ($document === null) {
             return [
                 'ok' => false,
                 'status_code' => 404,
                 'body' => [
-                    'error' => 'No se encontró un PDF asociado a esta referencia.',
+                    'error' => 'No se encontró un PDF asociado a este identificador.',
                 ],
             ];
         }
+
+        $pdfUrl = $this->miniosAdapter->temporaryObjectUrl(
+            $document->getBucket(),
+            $document->getObjectKey(),
+            $this->minioUrlExpirationHours
+        );
 
         return [
             'ok' => true,
             'status_code' => 200,
             'body' => [
-                'status' => $job['status'] ?? 'stored',
-                'reference' => $reference,
+                'status' => $document->getStatus(),
+                'reference' => $document->getReference(),
+                'uuid' => $document->getUuid(),
                 'message' => 'La solicitud ya cuenta con un PDF almacenado en MinIO.',
-                'generated_at' => $job['created_at'] ?? null,
-                'entorno' => $job['entorno'] ?? null,
-                'pdf_url' => $job['pdf_url'] ?? null,
-                'object_key' => $job['object_key'] ?? null,
-                'bucket' => $job['bucket'] ?? null,
+                'generated_at' => $document->getProcessedAt()?->format(DATE_ATOM),
+                'tenant' => $document->getTenant(),
+                'usuario' => $document->getUsuario(),
+                'entorno' => $document->getEntorno(),
+                'pdf_url' => $pdfUrl,
+            ],
+        ];
+    }
+
+    /**
+     * @param array{tenant?: mixed, usuario?: mixed, entorno?: mixed, limit?: mixed} $filters
+     */
+    public function findObjectKeys(array $filters): array
+    {
+        $usuario = isset($filters['usuario']) ? trim((string) $filters['usuario']) : '';
+        $entorno = isset($filters['entorno']) ? trim((string) $filters['entorno']) : '';
+        $tenant = isset($filters['tenant']) && is_string($filters['tenant']) ? trim($filters['tenant']) : null;
+        $limit = isset($filters['limit']) ? max(1, (int) $filters['limit']) : null;
+
+        if ($usuario === '' || $entorno === '') {
+            return [
+                'ok' => false,
+                'status_code' => 400,
+                'body' => [
+                    'error' => 'Los campos "usuario" y "entorno" son obligatorios para buscar keys.',
+                ],
+            ];
+        }
+
+        $documents = $this->pdfDocumentRepository->findByFilters($usuario, $entorno, $tenant, $limit);
+        $records = array_map(
+            function (PdfDocument $document): array {
+                return [
+                    'uuid' => $document->getUuid(),
+                    'reference' => $document->getReference(),
+                    'tenant' => $document->getTenant(),
+                    'usuario' => $document->getUsuario(),
+                    'entorno' => $document->getEntorno(),
+                    'pdf_url' => $this->miniosAdapter->temporaryObjectUrl(
+                        $document->getBucket(),
+                        $document->getObjectKey(),
+                        $this->minioUrlExpirationHours
+                    ),
+                ];
+            },
+            $documents
+        );
+
+        return [
+            'ok' => true,
+            'status_code' => 200,
+            'body' => [
+                'message' => 'Keys obtenidas desde la base de datos.',
+                'filters' => [
+                    'tenant' => $tenant,
+                    'usuario' => $usuario,
+                    'entorno' => $entorno,
+                    'limit' => $limit,
+                ],
+                'count' => count($records),
+                'records' => $records,
+            ],
+        ];
+    }
+
+    /**
+     * @param array{tenant?: mixed, entorno?: mixed, limit?: mixed} $filters
+     */
+    public function findSignedUrls(array $filters): array
+    {
+        $tenant = isset($filters['tenant']) && is_string($filters['tenant']) ? trim($filters['tenant']) : '';
+        $entorno = isset($filters['entorno']) && is_string($filters['entorno']) ? trim($filters['entorno']) : '';
+        $limit = isset($filters['limit']) ? max(1, (int) $filters['limit']) : null;
+
+        if ($tenant === '' || $entorno === '') {
+            return [
+                'ok' => false,
+                'status_code' => 400,
+                'body' => [
+                    'error' => 'Los campos "tenant" y "entorno" son obligatorios para buscar URLs firmadas.',
+                ],
+            ];
+        }
+
+        $documents = $this->pdfDocumentRepository->findByTenantAndEntorno($tenant, $entorno, $limit);
+        $records = array_map(
+            function (PdfDocument $document): array {
+                return [
+                    'uuid' => $document->getUuid(),
+                    'pdf_url' => $this->miniosAdapter->temporaryObjectUrl(
+                        $document->getBucket(),
+                        $document->getObjectKey(),
+                        $this->minioUrlExpirationHours
+                    ),
+                ];
+            },
+            $documents
+        );
+
+        return [
+            'ok' => true,
+            'status_code' => 200,
+            'body' => [
+                'message' => 'URLs firmadas obtenidas desde la base de datos.',
+                'filters' => [
+                    'tenant' => $tenant,
+                    'entorno' => $entorno,
+                    'limit' => $limit,
+                ],
+                'count' => count($records),
+                'records' => $records,
             ],
         ];
     }
@@ -213,4 +333,21 @@ final class PdfService
         return preg_match('/^[a-f0-9]{32}-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', $reference) === 1;
     }
 
+    private function isValidUuid(string $uuid): bool
+    {
+        return preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', $uuid) === 1;
+    }
+
+    private function findDocumentByIdentifier(string $identifier): ?PdfDocument
+    {
+        if ($this->isValidUuid($identifier)) {
+            return $this->pdfDocumentRepository->findByUuid($identifier);
+        }
+
+        if ($this->isValidReference($identifier)) {
+            return $this->pdfDocumentRepository->findByReference($identifier);
+        }
+
+        return null;
+    }
 }

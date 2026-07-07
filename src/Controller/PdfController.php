@@ -31,6 +31,30 @@ final class PdfController
         return new JsonResponse($result['body'], $result['status_code']);
     }
 
+    #[Route('/keys', name: 'app_pdf_keys', methods: ['POST'])]
+    public function keys(Request $request): JsonResponse
+    {
+        $filters = json_decode($request->getContent(), true);
+
+        if (!is_array($filters)) {
+            return new JsonResponse([
+                'error' => 'El body debe ser un JSON válido.',
+            ], JsonResponse::HTTP_BAD_REQUEST);
+        }
+
+        $result = $this->pdfService->findObjectKeys($filters);
+
+        return new JsonResponse($result['body'], $result['status_code']);
+    }
+
+    #[Route('/signed-urls', name: 'app_pdf_signed_urls', methods: ['GET'])]
+    public function signedUrls(Request $request): JsonResponse
+    {
+        $result = $this->pdfService->findSignedUrls($request->query->all());
+
+        return new JsonResponse($result['body'], $result['status_code']);
+    }
+
     #[Route('/pdf/{reference}', name: 'app_pdf_link', methods: ['GET'])]
     public function pdfLink(string $reference): JsonResponse
     {
@@ -62,8 +86,6 @@ final class PdfController
     {
         $status = htmlspecialchars((string) ($body['status'] ?? 'stored'), ENT_QUOTES, 'UTF-8');
         $generatedAt = htmlspecialchars((string) ($body['generated_at'] ?? ''), ENT_QUOTES, 'UTF-8');
-        $bucket = htmlspecialchars((string) ($body['bucket'] ?? ''), ENT_QUOTES, 'UTF-8');
-        $objectKey = htmlspecialchars((string) ($body['object_key'] ?? ''), ENT_QUOTES, 'UTF-8');
         $safePdfUrl = htmlspecialchars($pdfUrl, ENT_QUOTES, 'UTF-8');
         $safeReference = htmlspecialchars($reference, ENT_QUOTES, 'UTF-8');
 
@@ -149,8 +171,6 @@ final class PdfController
         <div class="meta">
             <div class="item"><div class="label">Estado</div><div class="value">{$status}</div></div>
             <div class="item"><div class="label">Generado</div><div class="value">{$generatedAt}</div></div>
-            <div class="item"><div class="label">Bucket</div><div class="value">{$bucket}</div></div>
-            <div class="item"><div class="label">Object Key</div><div class="value">{$objectKey}</div></div>
         </div>
         <iframe src="{$safePdfUrl}" title="PDF {$safeReference}"></iframe>
     </div>
