@@ -147,6 +147,7 @@ final class PdfService
                 (string) $payload['tenant'],
                 (string) $payload['usuario'],
                 (string) $payload['entorno'],
+                (string) $payload['html'],
                 $jsonData,
                 $objectKey,
                 $bucket,

@@ -4,6 +4,21 @@ namespace App\Service\Pdf;
 
 final class PdfHtmlValidator
 {
+    /**
+     * @var array<int, string>
+     */
+    private const ALLOWED_SEMANTIC_TAGS = [
+        'article',
+        'aside',
+        'footer',
+        'header',
+        'main',
+        'nav',
+        'section',
+        'figure',
+        'figcaption',
+    ];
+
     public function validate(string $html): array
     {
         $html = trim($html);
@@ -33,7 +48,12 @@ final class PdfHtmlValidator
         $errors = [];
 
         foreach (libxml_get_errors() as $error) {
-            $errors[] = trim($error->message);
+            $message = trim($error->message);
+            if ($this->isAllowedSemanticTagWarning($message)) {
+                continue;
+            }
+
+            $errors[] = $message;
         }
 
         libxml_clear_errors();
@@ -43,5 +63,20 @@ final class PdfHtmlValidator
             'valid' => $loaded && $errors === [],
             'errors' => $errors,
         ];
+    }
+
+    private function isAllowedSemanticTagWarning(string $message): bool
+    {
+        if ($message === '') {
+            return false;
+        }
+
+        if (preg_match('/Tag\s+([a-z0-9:-]+)\s+invalid/i', $message, $matches) !== 1) {
+            return false;
+        }
+
+        $tag = strtolower((string) ($matches[1] ?? ''));
+
+        return in_array($tag, self::ALLOWED_SEMANTIC_TAGS, true);
     }
 }

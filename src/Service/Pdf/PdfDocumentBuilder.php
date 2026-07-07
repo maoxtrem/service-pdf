@@ -36,7 +36,7 @@ final class PdfDocumentBuilder
         if (class_exists(Dompdf::class) && class_exists(Options::class)) {
             $options = new Options();
             $options->set('defaultFont', 'DejaVu Sans');
-            $options->set('isRemoteEnabled', false);
+            $options->set('isRemoteEnabled', true);
 
             $dompdf = new Dompdf($options);
             $dompdf->loadHtml($this->wrapHtml($html), 'UTF-8');

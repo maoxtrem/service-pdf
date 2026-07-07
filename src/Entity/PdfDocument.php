@@ -32,6 +32,9 @@ class PdfDocument
     #[ORM\Column(length: 100)]
     private string $entorno;
 
+    #[ORM\Column(name: 'html_content', type: 'text')]
+    private string $htmlContent;
+
     #[ORM\Column(name: 'request_payload', type: 'json')]
     private array $requestPayload = [];
 
@@ -59,6 +62,7 @@ class PdfDocument
         string $tenant,
         string $usuario,
         string $entorno,
+        string $htmlContent,
         array $requestPayload,
         string $objectKey,
         string $bucket,
@@ -70,6 +74,7 @@ class PdfDocument
         $this->tenant = $tenant;
         $this->usuario = $usuario;
         $this->entorno = $entorno;
+        $this->htmlContent = $htmlContent;
         $this->requestPayload = $requestPayload;
         $this->objectKey = $objectKey;
         $this->bucket = $bucket;
@@ -120,6 +125,11 @@ class PdfDocument
     public function getEntorno(): string
     {
         return $this->entorno;
+    }
+
+    public function getHtmlContent(): string
+    {
+        return $this->htmlContent;
     }
 
     public function getRequestPayload(): array
