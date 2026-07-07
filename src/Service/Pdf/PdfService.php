@@ -77,6 +77,13 @@ final class PdfService
         $referenceData = $this->referenceGenerator->generate();
         $reference = $referenceData['value'];
         $jsonData = is_array($payload['json'] ?? null) ? $payload['json'] : [];
+        $paperSize = (string) ($payload['paper_size'] ?? 'A4');
+        $orientation = (string) ($payload['orientation'] ?? 'portrait');
+        $storedPayload = [
+            'json' => $jsonData,
+            'paper_size' => $paperSize,
+            'orientation' => $orientation,
+        ];
         $objectKey = $this->objectKeyGenerator->generate();
 
         try {
@@ -98,9 +105,11 @@ final class PdfService
                 ];
             }
 
-            $payloadForPdf = $payload;
-            $payloadForPdf['html'] = $renderedHtml;
-            $payloadForPdf['json'] = $jsonData;
+            $payloadForPdf = [
+                'html' => $renderedHtml,
+                'paper_size' => $paperSize,
+                'orientation' => $orientation,
+            ];
 
             $pdfBinary = $this->documentBuilder->buildFromHtml($renderedHtml, $payloadForPdf);
         } catch (\Throwable $exception) {
@@ -148,7 +157,7 @@ final class PdfService
                 (string) $payload['usuario'],
                 (string) $payload['entorno'],
                 (string) $payload['html'],
-                $jsonData,
+                $storedPayload,
                 $objectKey,
                 $bucket,
             );
@@ -180,6 +189,105 @@ final class PdfService
                 'tenant' => $payload['tenant'],
                 'usuario' => $payload['usuario'],
                 'entorno' => $payload['entorno'],
+                'pdf_url' => $pdfUrl,
+                'pdf_url_expires_in_hours' => $this->minioUrlExpirationHours,
+            ],
+        ];
+    }
+
+    public function restore(string $identifier): array
+    {
+        $document = $this->findDocumentByIdentifier($identifier);
+
+        if ($document === null) {
+            return [
+                'ok' => false,
+                'status_code' => 404,
+                'body' => [
+                    'error' => 'No se encontró un PDF asociado a este identificador.',
+                ],
+            ];
+        }
+
+        $storedPayload = $document->getRequestPayload();
+        $jsonData = $this->extractStoredJsonData($storedPayload);
+        $paperSize = $this->extractStoredPaperSize($storedPayload);
+        $orientation = $this->extractStoredOrientation($storedPayload);
+
+        try {
+            $context = $this->documentBuilder->buildContext($jsonData);
+            $renderedHtml = $this->documentBuilder->renderTemplate(
+                $document->getHtmlContent(),
+                $context
+            );
+            $htmlValidation = $this->htmlValidator->validate($renderedHtml);
+
+            if (!$htmlValidation['valid']) {
+                return [
+                    'ok' => false,
+                    'status_code' => 400,
+                    'body' => [
+                        'error' => 'El HTML almacenado no es válido.',
+                        'details' => $htmlValidation['errors'],
+                    ],
+                ];
+            }
+
+            $pdfBinary = $this->documentBuilder->buildFromHtml($renderedHtml, [
+                'paper_size' => $paperSize,
+                'orientation' => $orientation,
+            ]);
+        } catch (\Throwable $exception) {
+            return [
+                'ok' => false,
+                'status_code' => 400,
+                'body' => [
+                    'error' => 'No se pudo reconstruir el PDF desde la base de datos.',
+                    'details' => $exception->getMessage(),
+                ],
+            ];
+        }
+
+        $uploadResult = $this->miniosAdapter->putObject(
+            $document->getBucket(),
+            $document->getObjectKey(),
+            $pdfBinary,
+            'application/pdf'
+        );
+
+        if (!($uploadResult['ok'] ?? false)) {
+            return [
+                'ok' => false,
+                'status_code' => 502,
+                'body' => [
+                    'error' => 'No fue posible sobrescribir el PDF en MinIO.',
+                    'tenant' => $document->getTenant(),
+                    'usuario' => $document->getUsuario(),
+                    'entorno' => $document->getEntorno(),
+                ],
+            ];
+        }
+
+        $document->markProcessed();
+        $this->entityManager->flush();
+
+        $pdfUrl = $this->miniosAdapter->temporaryObjectUrl(
+            $document->getBucket(),
+            $document->getObjectKey(),
+            $this->minioUrlExpirationHours
+        );
+
+        return [
+            'ok' => true,
+            'status_code' => 200,
+            'body' => [
+                'status' => 'restored',
+                'message' => 'El PDF fue reconstruido desde la base de datos y actualizado en MinIO.',
+                'reference' => $document->getReference(),
+                'uuid' => $document->getUuid(),
+                'tenant' => $document->getTenant(),
+                'usuario' => $document->getUsuario(),
+                'entorno' => $document->getEntorno(),
                 'pdf_url' => $pdfUrl,
                 'pdf_url_expires_in_hours' => $this->minioUrlExpirationHours,
             ],
@@ -350,5 +458,37 @@ final class PdfService
         }
 
         return null;
+    }
+
+    /**
+     * @param array<string, mixed> $requestPayload
+     */
+    private function extractStoredJsonData(array $requestPayload): array
+    {
+        if (isset($requestPayload['json']) && is_array($requestPayload['json'])) {
+            return $requestPayload['json'];
+        }
+
+        return $requestPayload;
+    }
+
+    /**
+     * @param array<string, mixed> $requestPayload
+     */
+    private function extractStoredPaperSize(array $requestPayload): string
+    {
+        $paperSize = $requestPayload['paper_size'] ?? 'A4';
+
+        return is_string($paperSize) && trim($paperSize) !== '' ? $paperSize : 'A4';
+    }
+
+    /**
+     * @param array<string, mixed> $requestPayload
+     */
+    private function extractStoredOrientation(array $requestPayload): string
+    {
+        $orientation = $requestPayload['orientation'] ?? 'portrait';
+
+        return is_string($orientation) && trim($orientation) !== '' ? $orientation : 'portrait';
     }
 }

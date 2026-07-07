@@ -80,3 +80,9 @@ Accept: application/json
 # Reemplaza la key por la referencia completa que te devolvió /generate.
 GET https://service-pdf.localhost/preview/56882298e1122dc25987164ddf3aeaa5-a783431e-1323-4153-8a3b-e6ec8b86ce1c
 Accept: text/html
+
+###
+# Restaurar un PDF desde la base de datos y sobrescribirlo en MinIO.
+# Puedes enviar la reference o el uuid del registro.
+POST https://service-pdf.localhost/pdf/56882298e1122dc25987164ddf3aeaa5-a783431e-1323-4153-8a3b-e6ec8b86ce1c/restore
+Accept: application/json

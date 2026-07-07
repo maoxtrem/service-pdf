@@ -63,6 +63,14 @@ final class PdfController
         return new JsonResponse($result['body'], $result['status_code']);
     }
 
+    #[Route('/pdf/{reference}/restore', name: 'app_pdf_restore', methods: ['POST'])]
+    public function restore(string $reference): JsonResponse
+    {
+        $result = $this->pdfService->restore($reference);
+
+        return new JsonResponse($result['body'], $result['status_code']);
+    }
+
     #[Route('/preview/{reference}', name: 'app_pdf_preview', methods: ['GET'])]
     public function preview(string $reference): Response
     {
