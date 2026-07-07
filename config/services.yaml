@@ -13,11 +13,23 @@ services:
     _defaults:
         autowire: true      # Automatically injects dependencies in your services.
         autoconfigure: true # Automatically registers your services as commands, event subscribers, etc.
+        bind:
+            string $minioEndpoint: '%env(resolve:MINIO_ENDPOINT)%'
+            string $minioPublicEndpoint: '%env(resolve:MINIO_PUBLIC_ENDPOINT)%'
+            string $minioRegion: '%env(resolve:MINIO_REGION)%'
+            string $minioBucket: '%env(resolve:MINIO_BUCKET)%'
+            string $minioAccessKey: '%env(resolve:MINIO_ACCESS_KEY)%'
+            string $minioSecretKey: '%env(resolve:MINIO_SECRET_KEY)%'
+            bool $minioUsePathStyle: '%env(bool:MINIO_USE_PATH_STYLE)%'
+            bool $minioVerifySsl: '%env(bool:MINIO_VERIFY_SSL)%'
+            int $minioUrlExpirationHours: '%env(int:MINIO_URL_EXPIRATION_HOURS)%'
 
     # makes classes in src/ available to be used as services
     # this creates a service per class whose id is the fully-qualified class name
     App\:
         resource: '../src/'
+
+    App\Service\Minios\MiniosAdapterInterface: '@App\Service\Minios\HttpMiniosAdapter'
 
     # add more service definitions when explicit configuration is needed
     # please note that last definitions always *replace* previous ones

@@ -1,0 +1,19 @@
+POST https://service-pdf.localhost/generate
+Content-Type: application/json
+Accept: application/json
+
+{
+  "tenant": "tenant-demo",
+  "usuario": "usuario-demo",
+  "entorno": "dev",
+  "html": "<html><body><h1>PDF</h1></body></html>",
+  "json": {
+    "titulo": "Documento de prueba"
+  }
+}
+
+###
+# Vista HTML de una referencia existente.
+# Reemplaza la key por la referencia completa que te devolvió /generate.
+GET https://service-pdf.localhost/preview/56882298e1122dc25987164ddf3aeaa5-a783431e-1323-4153-8a3b-e6ec8b86ce1c
+Accept: text/html
