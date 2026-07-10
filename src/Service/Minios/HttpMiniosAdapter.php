@@ -15,7 +15,7 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
         private readonly string $minioEndpoint,
         private readonly string $minioPublicEndpoint,
         private readonly string $minioRegion,
-        private readonly string $minioBucket,
+        private readonly string $minioDefaultBucket,
         private readonly string $minioAccessKey,
         private readonly string $minioSecretKey,
         private readonly bool $minioUsePathStyle,
@@ -27,7 +27,7 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
 
     public function putObject(string $bucket, string $objectKey, string $content, string $contentType = 'application/pdf'): array
     {
-        $bucketName = $bucket !== '' ? $bucket : $this->minioBucket;
+        $bucketName = $bucket !== '' ? $bucket : $this->minioDefaultBucket;
 
         try {
             $result = $this->internalClient->putObject([
@@ -60,7 +60,7 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
 
     public function temporaryObjectUrl(string $bucket, string $objectKey, int $expiresInHours): string
     {
-        $bucketName = $bucket !== '' ? $bucket : $this->minioBucket;
+        $bucketName = $bucket !== '' ? $bucket : $this->minioDefaultBucket;
         $expiresInSeconds = max(1, $expiresInHours) * 3600;
 
         $command = $this->publicClient->getCommand('GetObject', [
@@ -75,7 +75,7 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
 
     public function downloadObject(string $bucket, string $objectKey): array
     {
-        $bucketName = $bucket !== '' ? $bucket : $this->minioBucket;
+        $bucketName = $bucket !== '' ? $bucket : $this->minioDefaultBucket;
 
         try {
             $result = $this->publicClient->getObject([
@@ -100,6 +100,36 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
                 'status_code' => 502,
                 'body' => [
                     'error' => 'No fue posible descargar el archivo desde MinIO/S3.',
+                    'details' => $exception->getAwsErrorMessage() ?: $exception->getMessage(),
+                ],
+            ];
+        }
+    }
+
+    public function deleteObject(string $bucket, string $objectKey): array
+    {
+        $bucketName = $bucket !== '' ? $bucket : $this->minioDefaultBucket;
+
+        try {
+            $this->internalClient->deleteObject([
+                'Bucket' => $bucketName,
+                'Key' => $objectKey,
+            ]);
+
+            return [
+                'ok' => true,
+                'status_code' => 200,
+                'body' => [
+                    'bucket' => $bucketName,
+                    'key' => $objectKey,
+                ],
+            ];
+        } catch (AwsException $exception) {
+            return [
+                'ok' => false,
+                'status_code' => 502,
+                'body' => [
+                    'error' => 'No fue posible eliminar el archivo en MinIO/S3.',
                     'details' => $exception->getAwsErrorMessage() ?: $exception->getMessage(),
                 ],
             ];

@@ -17,7 +17,7 @@ final class PdfService
         private readonly PdfDocumentRepository $pdfDocumentRepository,
         private readonly EntityManagerInterface $entityManager,
         private readonly MiniosAdapterInterface $miniosAdapter,
-        private readonly string $minioBucket,
+        private readonly string $pdfMinioBucket,
         private readonly int $minioUrlExpirationHours,
     ) {
     }
@@ -118,7 +118,7 @@ final class PdfService
                 ],
             ];
         }
-        $bucket = $this->minioBucket;
+        $bucket = $this->pdfMinioBucket;
 
         $uploadResult = $this->miniosAdapter->putObject($bucket, $objectKey, $pdfBinary, 'application/pdf');
         $pdfUrl = $this->miniosAdapter->temporaryObjectUrl($bucket, $objectKey, $this->minioUrlExpirationHours);

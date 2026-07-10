@@ -9,4 +9,6 @@ interface MiniosAdapterInterface
     public function temporaryObjectUrl(string $bucket, string $objectKey, int $expiresInHours): string;
 
     public function downloadObject(string $bucket, string $objectKey): array;
+
+    public function deleteObject(string $bucket, string $objectKey): array;
 }
