@@ -118,6 +118,26 @@ final class ImageService
         ];
     }
 
+    public function resolve(string $identifier): array
+    {
+        $document = $this->findDocumentByIdentifier($identifier);
+
+        if ($document === null) {
+            return $this->errorResponse(404, 'No se encontró la imagen solicitada.', []);
+        }
+
+        return [
+            'ok' => true,
+            'status_code' => 200,
+            'body' => array_merge(
+                [
+                    'status' => $document->getStatus(),
+                ],
+                $this->buildImageResponseBody($document)
+            ),
+        ];
+    }
+
     /**
      * @param array{tenant?: mixed, usuario?: mixed, entorno?: mixed, limit?: mixed} $filters
      */
@@ -342,21 +362,13 @@ final class ImageService
         return [
             'ok' => true,
             'status_code' => $statusCode,
-            'body' => [
-                'status' => $status,
-                'message' => $message,
-                'reference' => $document->getReference(),
-                'uuid' => $document->getUuid(),
-                'tenant' => $document->getTenant(),
-                'usuario' => $document->getUsuario(),
-                'entorno' => $document->getEntorno(),
-                'image_url' => $this->miniosAdapter->temporaryObjectUrl(
-                    $document->getBucket(),
-                    $document->getObjectKey(),
-                    $this->minioUrlExpirationHours
-                ),
-                'image_url_expires_in_hours' => $this->minioUrlExpirationHours,
-            ],
+            'body' => array_merge(
+                [
+                    'status' => $status,
+                    'message' => $message,
+                ],
+                $this->buildImageResponseBody($document)
+            ),
         ];
     }
 
@@ -457,5 +469,25 @@ final class ImageService
         );
 
         return $document;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildImageResponseBody(ImageDocument $document): array
+    {
+        return [
+            'reference' => $document->getReference(),
+            'uuid' => $document->getUuid(),
+            'tenant' => $document->getTenant(),
+            'usuario' => $document->getUsuario(),
+            'entorno' => $document->getEntorno(),
+            'image_url' => $this->miniosAdapter->temporaryObjectUrl(
+                $document->getBucket(),
+                $document->getObjectKey(),
+                $this->minioUrlExpirationHours
+            ),
+            'image_url_expires_in_hours' => $this->minioUrlExpirationHours,
+        ];
     }
 }

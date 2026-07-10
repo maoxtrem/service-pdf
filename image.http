@@ -26,6 +26,25 @@ Accept: application/json
 ### }
 
 ###
+# Obtener la URL firmada de una imagen existente sin exponer el binario.
+# Reemplaza el identifier por la reference o uuid devueltos por /images.
+GET https://service-pdf.localhost/images/REEMPLAZA_REFERENCE
+Accept: application/json
+
+### Response esperada
+### HTTP/1.1 200 OK
+### {
+###   "status": "stored",
+###   "reference": "...",
+###   "uuid": "...",
+###   "tenant": "tenant-demo",
+###   "usuario": "usuario-demo",
+###   "entorno": "dev",
+###   "image_url": "https://...",
+###   "image_url_expires_in_hours": 24
+### }
+
+###
 # Actualizar una imagen existente.
 # Reemplaza el identifier por la reference o uuid devueltos por /images.
 PUT https://service-pdf.localhost/images/REEMPLAZA_REFERENCE

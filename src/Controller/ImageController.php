@@ -49,6 +49,14 @@ final class ImageController
         return new JsonResponse($result['body'], $result['status_code']);
     }
 
+    #[Route('/images/{identifier}', name: 'app_images_resolve', methods: ['GET'])]
+    public function resolve(string $identifier): JsonResponse
+    {
+        $result = $this->imageService->resolve($identifier);
+
+        return new JsonResponse($result['body'], $result['status_code']);
+    }
+
     #[Route('/images', name: 'app_images_list', methods: ['GET'])]
     public function list(Request $request): JsonResponse
     {
