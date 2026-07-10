@@ -1,0 +1,38 @@
+POST https://service-pdf.localhost/images
+Content-Type: application/json
+Accept: application/json
+
+{
+  "tenant": "tenant-demo",
+  "usuario": "usuario-demo",
+  "entorno": "dev",
+  "mime_type": "image/png",
+  "file_name": "logo-demo.png",
+  "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Zt8sAAAAASUVORK5CYII="
+}
+
+###
+# Actualizar una imagen existente.
+# Reemplaza el identifier por la reference o uuid devueltos por /images.
+PUT https://service-pdf.localhost/images/REEMPLAZA_REFERENCE
+Content-Type: application/json
+Accept: application/json
+
+{
+  "tenant": "tenant-demo",
+  "usuario": "usuario-demo",
+  "entorno": "dev",
+  "mime_type": "image/png",
+  "file_name": "logo-demo-updated.png",
+  "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Zt8sAAAAASUVORK5CYII="
+}
+
+###
+# Eliminar una imagen existente.
+DELETE https://service-pdf.localhost/images/REEMPLAZA_REFERENCE
+Accept: application/json
+
+###
+# Listar imágenes filtradas por tenant, usuario y entorno.
+GET https://service-pdf.localhost/images?tenant=tenant-demo&usuario=usuario-demo&entorno=dev&limit=10
+Accept: application/json
