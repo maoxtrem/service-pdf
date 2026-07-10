@@ -11,6 +11,20 @@ Accept: application/json
   "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Zt8sAAAAASUVORK5CYII="
 }
 
+### Response esperada
+### HTTP/1.1 201 Created
+### {
+###   "status": "stored",
+###   "message": "Imagen guardada correctamente.",
+###   "reference": "...",
+###   "uuid": "...",
+###   "tenant": "tenant-demo",
+###   "usuario": "usuario-demo",
+###   "entorno": "dev",
+###   "image_url": "https://...",
+###   "image_url_expires_in_hours": 24
+### }
+
 ###
 # Actualizar una imagen existente.
 # Reemplaza el identifier por la reference o uuid devueltos por /images.
@@ -27,12 +41,64 @@ Accept: application/json
   "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Zt8sAAAAASUVORK5CYII="
 }
 
+### Response esperada
+### HTTP/1.1 200 OK
+### {
+###   "status": "updated",
+###   "message": "Imagen actualizada correctamente.",
+###   "reference": "...",
+###   "uuid": "...",
+###   "tenant": "tenant-demo",
+###   "usuario": "usuario-demo",
+###   "entorno": "dev",
+###   "image_url": "https://...",
+###   "image_url_expires_in_hours": 24
+### }
+
 ###
 # Eliminar una imagen existente.
 DELETE https://service-pdf.localhost/images/REEMPLAZA_REFERENCE
 Accept: application/json
 
+### Response esperada
+### HTTP/1.1 200 OK
+### {
+###   "status": "deleted",
+###   "message": "Imagen eliminada correctamente.",
+###   "reference": "...",
+###   "uuid": "...",
+###   "tenant": "tenant-demo",
+###   "usuario": "usuario-demo",
+###   "entorno": "dev"
+### }
+
 ###
 # Listar imágenes filtradas por tenant, usuario y entorno.
 GET https://service-pdf.localhost/images?tenant=tenant-demo&usuario=usuario-demo&entorno=dev&limit=10
 Accept: application/json
+
+### Response esperada
+### HTTP/1.1 200 OK
+### {
+###   "message": "Imágenes obtenidas desde la base de datos.",
+###   "filters": {
+###     "tenant": "tenant-demo",
+###     "usuario": "usuario-demo",
+###     "entorno": "dev",
+###     "limit": 10
+###   },
+###   "count": 1,
+###   "records": [
+###     {
+###       "reference": "...",
+###       "uuid": "...",
+###       "tenant": "tenant-demo",
+###       "usuario": "usuario-demo",
+###       "entorno": "dev",
+###       "status": "stored",
+###       "image_file_name": "logo-demo.png",
+###       "image_mime_type": "image/png",
+###       "image_url": "https://..."
+###     }
+###   ]
+### }

@@ -390,24 +390,26 @@ final class PdfService
     public function findSignedUrls(array $filters): array
     {
         $tenant = isset($filters['tenant']) && is_string($filters['tenant']) ? trim($filters['tenant']) : '';
+        $usuario = isset($filters['usuario']) && is_string($filters['usuario']) ? trim($filters['usuario']) : '';
         $entorno = isset($filters['entorno']) && is_string($filters['entorno']) ? trim($filters['entorno']) : '';
         $limit = isset($filters['limit']) ? max(1, (int) $filters['limit']) : null;
 
-        if ($tenant === '' || $entorno === '') {
+        if ($tenant === '' || $usuario === '' || $entorno === '') {
             return [
                 'ok' => false,
                 'status_code' => 400,
                 'body' => [
-                    'error' => 'Los campos "tenant" y "entorno" son obligatorios para buscar URLs firmadas.',
+                    'error' => 'Los campos "tenant", "usuario" y "entorno" son obligatorios para buscar URLs firmadas.',
                 ],
             ];
         }
 
-        $documents = $this->pdfDocumentRepository->findByTenantAndEntorno($tenant, $entorno, $limit);
+        $documents = $this->pdfDocumentRepository->findByFilters($usuario, $entorno, $tenant, $limit);
         $records = array_map(
             function (PdfDocument $document): array {
                 return [
                     'uuid' => $document->getUuid(),
+                    'reference' => $document->getReference(),
                     'pdf_url' => $this->miniosAdapter->temporaryObjectUrl(
                         $document->getBucket(),
                         $document->getObjectKey(),
@@ -425,6 +427,7 @@ final class PdfService
                 'message' => 'URLs firmadas obtenidas desde la base de datos.',
                 'filters' => [
                     'tenant' => $tenant,
+                    'usuario' => $usuario,
                     'entorno' => $entorno,
                     'limit' => $limit,
                 ],
