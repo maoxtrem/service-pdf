@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Service\Pdf;
+namespace App\Service\Shared;
 
-final class PdfReferenceGenerator
+final class ResourceReferenceGenerator
 {
     public function generate(): array
     {

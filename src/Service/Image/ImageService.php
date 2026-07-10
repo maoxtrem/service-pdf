@@ -5,13 +5,15 @@ namespace App\Service\Image;
 use App\Entity\ImageDocument;
 use App\Repository\ImageDocumentRepository;
 use App\Service\Minios\MiniosAdapterInterface;
-use App\Service\Pdf\PdfReferenceGenerator;
+use App\Service\Shared\ResourceDocumentFinder;
+use App\Service\Shared\ResourceReferenceGenerator;
 use Doctrine\ORM\EntityManagerInterface;
 
 final class ImageService
 {
     public function __construct(
-        private readonly PdfReferenceGenerator $referenceGenerator,
+        private readonly ResourceReferenceGenerator $referenceGenerator,
+        private readonly ResourceDocumentFinder $documentFinder,
         private readonly ImageObjectKeyGenerator $objectKeyGenerator,
         private readonly ImageDocumentRepository $imageDocumentRepository,
         private readonly EntityManagerInterface $entityManager,
@@ -30,71 +32,21 @@ final class ImageService
 
         try {
             $imageData = $this->extractImageData($payload);
-            $referenceData = $this->referenceGenerator->generate();
-            $objectKey = $this->objectKeyGenerator->generate($imageData['extension']);
-            $bucket = $this->imageMinioBucket;
-            $requestPayload = $this->buildStoredPayload($imageData);
+            $document = $this->createImageDocument($payload, $imageData);
 
-            $uploadResult = $this->miniosAdapter->putObject(
-                $bucket,
-                $objectKey,
-                $imageData['binary'],
-                $imageData['mime_type']
+            return $this->storeImageDocument(
+                $payload,
+                $document,
+                $imageData,
+                'stored',
+                'Imagen guardada correctamente.',
+                201,
+                true
             );
-
-            if (!($uploadResult['ok'] ?? false)) {
-                return $this->errorResponse(
-                    502,
-                    'No fue posible guardar la imagen en MinIO.',
-                    $payload
-                );
-            }
-
-            $document = new ImageDocument(
-                $referenceData['value'],
-                $referenceData['uuid'],
-                (string) $payload['tenant'],
-                (string) $payload['usuario'],
-                (string) $payload['entorno'],
-                $imageData['mime_type'],
-                $imageData['file_name'],
-                $requestPayload,
-                $objectKey,
-                $bucket,
-            );
-            $document->markStored();
-
-            $this->entityManager->persist($document);
-            $this->entityManager->flush();
-
-            return [
-                'ok' => true,
-                'status_code' => 201,
-                'body' => [
-                    'status' => 'stored',
-                    'message' => 'Imagen guardada correctamente.',
-                    'reference' => $document->getReference(),
-                    'uuid' => $document->getUuid(),
-                    'tenant' => $document->getTenant(),
-                    'usuario' => $document->getUsuario(),
-                    'entorno' => $document->getEntorno(),
-                    'image_url' => $this->miniosAdapter->temporaryObjectUrl(
-                        $document->getBucket(),
-                        $document->getObjectKey(),
-                        $this->minioUrlExpirationHours
-                    ),
-                    'image_url_expires_in_hours' => $this->minioUrlExpirationHours,
-                ],
-            ];
         } catch (\Throwable $exception) {
-            return [
-                'ok' => false,
-                'status_code' => 400,
-                'body' => [
-                    'error' => 'No se pudo procesar la imagen.',
-                    'details' => $exception->getMessage(),
-                ],
-            ];
+            return $this->errorResponse(400, 'No se pudo procesar la imagen.', $payload, [
+                'details' => $exception->getMessage(),
+            ]);
         }
     }
 
@@ -102,13 +54,7 @@ final class ImageService
     {
         $document = $this->findDocumentByIdentifier($identifier);
         if ($document === null) {
-            return [
-                'ok' => false,
-                'status_code' => 404,
-                'body' => [
-                    'error' => 'No se encontró la imagen a actualizar.',
-                ],
-            ];
+            return $this->errorResponse(404, 'No se encontró la imagen a actualizar.', $payload);
         }
 
         $validation = $this->validateBasePayload($payload);
@@ -118,60 +64,20 @@ final class ImageService
 
         try {
             $imageData = $this->extractImageData($payload);
-            $requestPayload = $this->buildStoredPayload($imageData);
 
-            $uploadResult = $this->miniosAdapter->putObject(
-                $document->getBucket(),
-                $document->getObjectKey(),
-                $imageData['binary'],
-                $imageData['mime_type']
+            return $this->storeImageDocument(
+                $payload,
+                $document,
+                $imageData,
+                'updated',
+                'Imagen actualizada correctamente.',
+                200,
+                false
             );
-
-            if (!($uploadResult['ok'] ?? false)) {
-                return $this->errorResponse(
-                    502,
-                    'No fue posible actualizar la imagen en MinIO.',
-                    $payload
-                );
-            }
-
-            $document->replaceImageData(
-                $imageData['mime_type'],
-                $imageData['file_name'],
-                $requestPayload
-            );
-            $document->markStored();
-
-            $this->entityManager->flush();
-
-            return [
-                'ok' => true,
-                'status_code' => 200,
-                'body' => [
-                    'status' => 'updated',
-                    'message' => 'Imagen actualizada correctamente.',
-                    'reference' => $document->getReference(),
-                    'uuid' => $document->getUuid(),
-                    'tenant' => $document->getTenant(),
-                    'usuario' => $document->getUsuario(),
-                    'entorno' => $document->getEntorno(),
-                    'image_url' => $this->miniosAdapter->temporaryObjectUrl(
-                        $document->getBucket(),
-                        $document->getObjectKey(),
-                        $this->minioUrlExpirationHours
-                    ),
-                    'image_url_expires_in_hours' => $this->minioUrlExpirationHours,
-                ],
-            ];
         } catch (\Throwable $exception) {
-            return [
-                'ok' => false,
-                'status_code' => 400,
-                'body' => [
-                    'error' => 'No se pudo actualizar la imagen.',
-                    'details' => $exception->getMessage(),
-                ],
-            ];
+            return $this->errorResponse(400, 'No se pudo actualizar la imagen.', $payload, [
+                'details' => $exception->getMessage(),
+            ]);
         }
     }
 
@@ -180,13 +86,7 @@ final class ImageService
         $document = $this->findDocumentByIdentifier($identifier);
 
         if ($document === null) {
-            return [
-                'ok' => false,
-                'status_code' => 404,
-                'body' => [
-                    'error' => 'No se encontró la imagen a eliminar.',
-                ],
-            ];
+            return $this->errorResponse(404, 'No se encontró la imagen a eliminar.', []);
         }
 
         $deleteResult = $this->miniosAdapter->deleteObject(
@@ -195,14 +95,9 @@ final class ImageService
         );
 
         if (!($deleteResult['ok'] ?? false)) {
-            return [
-                'ok' => false,
-                'status_code' => 502,
-                'body' => [
-                    'error' => 'No fue posible eliminar la imagen en MinIO.',
-                    'details' => $deleteResult['body']['details'] ?? null,
-                ],
-            ];
+            return $this->errorResponse(502, 'No fue posible eliminar la imagen en MinIO.', [], [
+                'details' => $deleteResult['body']['details'] ?? null,
+            ]);
         }
 
         $document->markDeleted();
@@ -234,13 +129,11 @@ final class ImageService
         $limit = isset($filters['limit']) ? max(1, (int) $filters['limit']) : null;
 
         if ($tenant === '' || $usuario === '' || $entorno === '') {
-            return [
-                'ok' => false,
-                'status_code' => 400,
-                'body' => [
-                    'error' => 'Los campos "tenant", "usuario" y "entorno" son obligatorios para listar imágenes.',
-                ],
-            ];
+            return $this->errorResponse(
+                400,
+                'Los campos "tenant", "usuario" y "entorno" son obligatorios para listar imágenes.',
+                $filters
+            );
         }
 
         $documents = $this->imageDocumentRepository->findByFilters($usuario, $entorno, $tenant, $limit);
@@ -296,38 +189,33 @@ final class ImageService
         }
 
         if ($missingFields !== []) {
-            return [
-                'ok' => false,
-                'status_code' => 400,
-                'body' => [
-                    'error' => 'Faltan campos obligatorios.',
-                    'missing_fields' => $missingFields,
-                ],
-            ];
+            return $this->errorResponse(400, 'Faltan campos obligatorios.', $payload, [
+                'missing_fields' => $missingFields,
+            ]);
         }
 
         if (!is_string($payload['tenant']) || trim($payload['tenant']) === '') {
-            return $this->invalidFieldResponse('tenant', 'string no vacío');
+            return $this->errorResponse(400, 'El campo "tenant" debe ser string no vacío.', $payload);
         }
 
         if (!is_string($payload['usuario']) || trim($payload['usuario']) === '') {
-            return $this->invalidFieldResponse('usuario', 'string no vacío');
+            return $this->errorResponse(400, 'El campo "usuario" debe ser string no vacío.', $payload);
         }
 
         if (!is_string($payload['entorno']) || trim($payload['entorno']) === '') {
-            return $this->invalidFieldResponse('entorno', 'string no vacío');
+            return $this->errorResponse(400, 'El campo "entorno" debe ser string no vacío.', $payload);
         }
 
         if (!is_string($payload['image']) || trim($payload['image']) === '') {
-            return $this->invalidFieldResponse('image', 'string no vacío');
+            return $this->errorResponse(400, 'El campo "image" debe ser string no vacío.', $payload);
         }
 
         if (array_key_exists('mime_type', $payload) && !is_string($payload['mime_type'])) {
-            return $this->invalidFieldResponse('mime_type', 'string');
+            return $this->errorResponse(400, 'El campo "mime_type" debe ser string.', $payload);
         }
 
         if (array_key_exists('file_name', $payload) && !is_string($payload['file_name'])) {
-            return $this->invalidFieldResponse('file_name', 'string');
+            return $this->errorResponse(400, 'El campo "file_name" debe ser string.', $payload);
         }
 
         return null;
@@ -335,17 +223,12 @@ final class ImageService
 
     /**
      * @param array<string, mixed> $payload
-     * @return array{binary:string,mime_type:string,file_name:?string,extension:string}
+     * @return array{stream:resource,mime_type:string,file_name:?string,extension:string,size_bytes:int}
      */
     private function extractImageData(array $payload): array
     {
         $rawImage = trim((string) $payload['image']);
         $rawImage = preg_replace('/^data:[^;]+;base64,/', '', $rawImage) ?? $rawImage;
-
-        $binary = base64_decode($rawImage, true);
-        if ($binary === false) {
-            throw new \RuntimeException('La imagen debe ser una cadena base64 válida.');
-        }
 
         $mimeType = isset($payload['mime_type']) && is_string($payload['mime_type']) && trim($payload['mime_type']) !== ''
             ? trim($payload['mime_type'])
@@ -356,17 +239,19 @@ final class ImageService
             : null;
 
         $extension = $this->resolveExtension($mimeType, $fileName);
+        $stream = $this->decodeBase64ToStream($rawImage);
 
         return [
-            'binary' => $binary,
+            'stream' => $stream,
             'mime_type' => $mimeType,
             'file_name' => $fileName,
             'extension' => $extension,
+            'size_bytes' => $this->estimateDecodedSize($rawImage),
         ];
     }
 
     /**
-     * @param array{mime_type:string,file_name:?string,binary:string,extension:string} $imageData
+     * @param array{mime_type:string,file_name:?string,stream:resource,extension:string,size_bytes:int} $imageData
      * @return array<string, mixed>
      */
     private function buildStoredPayload(array $imageData): array
@@ -374,35 +259,125 @@ final class ImageService
         return [
             'mime_type' => $imageData['mime_type'],
             'file_name' => $imageData['file_name'],
-            'size_bytes' => strlen($imageData['binary']),
+            'size_bytes' => $imageData['size_bytes'],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array{stream:resource,mime_type:string,file_name:?string,extension:string,size_bytes:int} $imageData
+     */
+    private function createImageDocument(array $payload, array $imageData): ImageDocument
+    {
+        $referenceData = $this->referenceGenerator->generate();
+        $objectKey = $this->objectKeyGenerator->generate($imageData['extension']);
+
+        return new ImageDocument(
+            $referenceData['value'],
+            $referenceData['uuid'],
+            (string) $payload['tenant'],
+            (string) $payload['usuario'],
+            (string) $payload['entorno'],
+            $imageData['mime_type'],
+            $imageData['file_name'],
+            $this->buildStoredPayload($imageData),
+            $objectKey,
+            $this->imageMinioBucket,
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array{stream:resource,mime_type:string,file_name:?string,extension:string,size_bytes:int} $imageData
+     */
+    private function storeImageDocument(
+        array $payload,
+        ImageDocument $document,
+        array $imageData,
+        string $status,
+        string $message,
+        int $statusCode,
+        bool $isNewDocument
+    ): array {
+        $requestPayload = $this->buildStoredPayload($imageData);
+        $objectKey = $document->getObjectKey();
+        $content = $imageData['stream'];
+
+        $uploadResult = $this->miniosAdapter->putObject(
+            $document->getBucket(),
+            $objectKey,
+            $content,
+            $imageData['mime_type']
+        );
+
+        if (!($uploadResult['ok'] ?? false)) {
+            if (is_resource($content)) {
+                fclose($content);
+            }
+
+            return $this->errorResponse(
+                502,
+                $isNewDocument ? 'No fue posible guardar la imagen en MinIO.' : 'No fue posible actualizar la imagen en MinIO.',
+                $payload
+            );
+        }
+
+        if ($isNewDocument) {
+            $this->entityManager->persist($document);
+        } else {
+            $document->replaceImageData(
+                $imageData['mime_type'],
+                $imageData['file_name'],
+                $requestPayload
+            );
+        }
+
+        $document->markStored();
+        $this->entityManager->flush();
+
+        if (is_resource($content)) {
+            fclose($content);
+        }
+
+        return [
+            'ok' => true,
+            'status_code' => $statusCode,
+            'body' => [
+                'status' => $status,
+                'message' => $message,
+                'reference' => $document->getReference(),
+                'uuid' => $document->getUuid(),
+                'tenant' => $document->getTenant(),
+                'usuario' => $document->getUsuario(),
+                'entorno' => $document->getEntorno(),
+                'image_url' => $this->miniosAdapter->temporaryObjectUrl(
+                    $document->getBucket(),
+                    $document->getObjectKey(),
+                    $this->minioUrlExpirationHours
+                ),
+                'image_url_expires_in_hours' => $this->minioUrlExpirationHours,
+            ],
         ];
     }
 
     /**
      * @param array<string, mixed> $payload
      */
-    private function errorResponse(int $statusCode, string $message, array $payload): array
+    /**
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $extraBody
+     */
+    private function errorResponse(int $statusCode, string $message, array $payload, array $extraBody = []): array
     {
         return [
             'ok' => false,
             'status_code' => $statusCode,
-            'body' => [
+            'body' => array_merge([
                 'error' => $message,
                 'tenant' => $payload['tenant'] ?? null,
                 'usuario' => $payload['usuario'] ?? null,
                 'entorno' => $payload['entorno'] ?? null,
-            ],
-        ];
-    }
-
-    private function invalidFieldResponse(string $field, string $expected): array
-    {
-        return [
-            'ok' => false,
-            'status_code' => 400,
-            'body' => [
-                'error' => sprintf('El campo "%s" debe ser %s.', $field, $expected),
-            ],
+            ], $extraBody),
         ];
     }
 
@@ -423,26 +398,64 @@ final class ImageService
         };
     }
 
+    /**
+     * @return resource
+     */
+    private function decodeBase64ToStream(string $rawImage)
+    {
+        $stream = fopen('php://temp', 'w+b');
+        if ($stream === false) {
+            throw new \RuntimeException('No se pudo crear el buffer temporal de la imagen.');
+        }
+
+        $filter = stream_filter_append($stream, 'convert.base64-decode', STREAM_FILTER_WRITE);
+        if ($filter === false) {
+            fclose($stream);
+
+            throw new \RuntimeException('No se pudo preparar el decodificador base64.');
+        }
+
+        $length = strlen($rawImage);
+        $chunkSize = 8192;
+
+        for ($offset = 0; $offset < $length; $offset += $chunkSize) {
+            $chunk = substr($rawImage, $offset, $chunkSize);
+            if ($chunk === false) {
+                continue;
+            }
+
+            fwrite($stream, $chunk);
+        }
+
+        stream_filter_remove($filter);
+        rewind($stream);
+
+        return $stream;
+    }
+
+    private function estimateDecodedSize(string $rawImage): int
+    {
+        $length = strlen($rawImage);
+        $padding = 0;
+
+        if ($length >= 2 && str_ends_with($rawImage, '==')) {
+            $padding = 2;
+        } elseif ($length >= 1 && str_ends_with($rawImage, '=')) {
+            $padding = 1;
+        }
+
+        return (int) floor(($length * 3) / 4) - $padding;
+    }
+
     private function findDocumentByIdentifier(string $identifier): ?ImageDocument
     {
-        if ($this->isValidUuid($identifier)) {
-            return $this->imageDocumentRepository->findByUuid($identifier);
-        }
+        /** @var ImageDocument|null $document */
+        $document = $this->documentFinder->find(
+            $identifier,
+            fn(string $uuid): ?ImageDocument => $this->imageDocumentRepository->findByUuid($uuid),
+            fn(string $reference): ?ImageDocument => $this->imageDocumentRepository->findByReference($reference),
+        );
 
-        if ($this->isValidReference($identifier)) {
-            return $this->imageDocumentRepository->findByReference($identifier);
-        }
-
-        return null;
-    }
-
-    private function isValidReference(string $reference): bool
-    {
-        return preg_match('/^[a-f0-9]{32}-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', $reference) === 1;
-    }
-
-    private function isValidUuid(string $uuid): bool
-    {
-        return preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', $uuid) === 1;
+        return $document;
     }
 }

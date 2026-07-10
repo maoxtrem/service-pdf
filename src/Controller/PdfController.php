@@ -8,7 +8,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 use App\Service\Pdf\PdfService;
 
-final class PdfController
+final class PdfController extends AbstractJsonController
 {
     public function __construct(
         private readonly PdfService $pdfService,
@@ -18,12 +18,9 @@ final class PdfController
     #[Route('/generate', name: 'app_generate_pdf', methods: ['POST'])]
     public function generate(Request $request): JsonResponse
     {
-        $payload = json_decode($request->getContent(), true);
-
-        if (!is_array($payload)) {
-            return new JsonResponse([
-                'error' => 'El body debe ser un JSON válido.',
-            ], JsonResponse::HTTP_BAD_REQUEST);
+        $payload = $this->decodeJsonPayload($request);
+        if ($payload instanceof JsonResponse) {
+            return $payload;
         }
 
         $result = $this->pdfService->generate($payload);
@@ -34,12 +31,9 @@ final class PdfController
     #[Route('/keys', name: 'app_pdf_keys', methods: ['POST'])]
     public function keys(Request $request): JsonResponse
     {
-        $filters = json_decode($request->getContent(), true);
-
-        if (!is_array($filters)) {
-            return new JsonResponse([
-                'error' => 'El body debe ser un JSON válido.',
-            ], JsonResponse::HTTP_BAD_REQUEST);
+        $filters = $this->decodeJsonPayload($request);
+        if ($filters instanceof JsonResponse) {
+            return $filters;
         }
 
         $result = $this->pdfService->findObjectKeys($filters);

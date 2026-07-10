@@ -8,6 +8,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 
 final class ImageController
+    extends AbstractJsonController
 {
     public function __construct(
         private readonly ImageService $imageService,
@@ -17,12 +18,9 @@ final class ImageController
     #[Route('/images', name: 'app_images_create', methods: ['POST'])]
     public function create(Request $request): JsonResponse
     {
-        $payload = json_decode($request->getContent(), true);
-
-        if (!is_array($payload)) {
-            return new JsonResponse([
-                'error' => 'El body debe ser un JSON válido.',
-            ], JsonResponse::HTTP_BAD_REQUEST);
+        $payload = $this->decodeJsonPayload($request);
+        if ($payload instanceof JsonResponse) {
+            return $payload;
         }
 
         $result = $this->imageService->create($payload);
@@ -33,12 +31,9 @@ final class ImageController
     #[Route('/images/{identifier}', name: 'app_images_update', methods: ['PUT'])]
     public function update(string $identifier, Request $request): JsonResponse
     {
-        $payload = json_decode($request->getContent(), true);
-
-        if (!is_array($payload)) {
-            return new JsonResponse([
-                'error' => 'El body debe ser un JSON válido.',
-            ], JsonResponse::HTTP_BAD_REQUEST);
+        $payload = $this->decodeJsonPayload($request);
+        if ($payload instanceof JsonResponse) {
+            return $payload;
         }
 
         $result = $this->imageService->update($identifier, $payload);

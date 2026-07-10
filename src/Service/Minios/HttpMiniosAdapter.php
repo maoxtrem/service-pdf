@@ -25,7 +25,7 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
         $this->publicClient = $this->createClient($this->minioPublicEndpoint);
     }
 
-    public function putObject(string $bucket, string $objectKey, string $content, string $contentType = 'application/pdf'): array
+    public function putObject(string $bucket, string $objectKey, mixed $content, string $contentType = 'application/pdf'): array
     {
         $bucketName = $bucket !== '' ? $bucket : $this->minioDefaultBucket;
 

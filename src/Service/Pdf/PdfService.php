@@ -5,18 +5,21 @@ namespace App\Service\Pdf;
 use App\Entity\PdfDocument;
 use App\Repository\PdfDocumentRepository;
 use App\Service\Minios\MiniosAdapterInterface;
+use App\Service\Shared\ResourceDocumentFinder;
+use App\Service\Shared\ResourceReferenceGenerator;
 use Doctrine\ORM\EntityManagerInterface;
 
 final class PdfService
 {
     public function __construct(
         private readonly PdfHtmlValidator $htmlValidator,
-        private readonly PdfReferenceGenerator $referenceGenerator,
+        private readonly ResourceReferenceGenerator $referenceGenerator,
         private readonly PdfObjectKeyGenerator $objectKeyGenerator,
         private readonly PdfDocumentBuilder $documentBuilder,
         private readonly PdfDocumentRepository $pdfDocumentRepository,
         private readonly EntityManagerInterface $entityManager,
         private readonly MiniosAdapterInterface $miniosAdapter,
+        private readonly ResourceDocumentFinder $documentFinder,
         private readonly string $pdfMinioBucket,
         private readonly int $minioUrlExpirationHours,
     ) {
@@ -431,27 +434,16 @@ final class PdfService
         ];
     }
 
-    private function isValidReference(string $reference): bool
-    {
-        return preg_match('/^[a-f0-9]{32}-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', $reference) === 1;
-    }
-
-    private function isValidUuid(string $uuid): bool
-    {
-        return preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', $uuid) === 1;
-    }
-
     private function findDocumentByIdentifier(string $identifier): ?PdfDocument
     {
-        if ($this->isValidUuid($identifier)) {
-            return $this->pdfDocumentRepository->findByUuid($identifier);
-        }
+        /** @var PdfDocument|null $document */
+        $document = $this->documentFinder->find(
+            $identifier,
+            fn(string $uuid): ?PdfDocument => $this->pdfDocumentRepository->findByUuid($uuid),
+            fn(string $reference): ?PdfDocument => $this->pdfDocumentRepository->findByReference($reference),
+        );
 
-        if ($this->isValidReference($identifier)) {
-            return $this->pdfDocumentRepository->findByReference($identifier);
-        }
-
-        return null;
+        return $document;
     }
 
     /**
