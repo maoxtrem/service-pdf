@@ -1,4 +1,4 @@
-POST https://service-pdf.localhost/generate
+POST https://service-pdf.ospsources.com/generate
 Content-Type: application/json
 Accept: application/json
 

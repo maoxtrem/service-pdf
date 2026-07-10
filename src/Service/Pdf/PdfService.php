@@ -87,32 +87,28 @@ final class PdfService
         $objectKey = $this->objectKeyGenerator->generate();
 
         try {
-            $context = $this->documentBuilder->buildContext($jsonData);
-            $renderedHtml = $this->documentBuilder->renderTemplate(
+            $renderedDocument = $this->renderDocument(
                 (string) $payload['html'],
-                $context
+                $jsonData,
+                $paperSize,
+                $orientation
             );
-            $htmlValidation = $this->htmlValidator->validate($renderedHtml);
-
-            if (!$htmlValidation['valid']) {
+            $renderedHtml = $renderedDocument['html'];
+            $pdfBinary = $renderedDocument['pdf'];
+        } catch (\Throwable $exception) {
+            if (str_starts_with($exception->getMessage(), 'HTML_VALIDATION:')) {
                 return [
                     'ok' => false,
                     'status_code' => 400,
                     'body' => [
                         'error' => 'El HTML renderizado no es válido.',
-                        'details' => $htmlValidation['errors'],
+                        'details' => array_filter(
+                            explode(' | ', substr($exception->getMessage(), strlen('HTML_VALIDATION:')))
+                        ),
                     ],
                 ];
             }
 
-            $payloadForPdf = [
-                'html' => $renderedHtml,
-                'paper_size' => $paperSize,
-                'orientation' => $orientation,
-            ];
-
-            $pdfBinary = $this->documentBuilder->buildFromHtml($renderedHtml, $payloadForPdf);
-        } catch (\Throwable $exception) {
             return [
                 'ok' => false,
                 'status_code' => 400,
@@ -215,29 +211,27 @@ final class PdfService
         $orientation = $this->extractStoredOrientation($storedPayload);
 
         try {
-            $context = $this->documentBuilder->buildContext($jsonData);
-            $renderedHtml = $this->documentBuilder->renderTemplate(
+            $renderedDocument = $this->renderDocument(
                 $document->getHtmlContent(),
-                $context
+                $jsonData,
+                $paperSize,
+                $orientation
             );
-            $htmlValidation = $this->htmlValidator->validate($renderedHtml);
-
-            if (!$htmlValidation['valid']) {
+            $pdfBinary = $renderedDocument['pdf'];
+        } catch (\Throwable $exception) {
+            if (str_starts_with($exception->getMessage(), 'HTML_VALIDATION:')) {
                 return [
                     'ok' => false,
                     'status_code' => 400,
                     'body' => [
                         'error' => 'El HTML almacenado no es válido.',
-                        'details' => $htmlValidation['errors'],
+                        'details' => array_filter(
+                            explode(' | ', substr($exception->getMessage(), strlen('HTML_VALIDATION:')))
+                        ),
                     ],
                 ];
             }
 
-            $pdfBinary = $this->documentBuilder->buildFromHtml($renderedHtml, [
-                'paper_size' => $paperSize,
-                'orientation' => $orientation,
-            ]);
-        } catch (\Throwable $exception) {
             return [
                 'ok' => false,
                 'status_code' => 400,
@@ -458,6 +452,31 @@ final class PdfService
         }
 
         return null;
+    }
+
+    /**
+     * @param array<string, mixed> $jsonData
+     * @return array{html:string,pdf:string}
+     */
+    private function renderDocument(string $template, array $jsonData, string $paperSize, string $orientation): array
+    {
+        $context = $this->documentBuilder->buildContext($jsonData);
+        $renderedHtml = $this->documentBuilder->renderTemplate($template, $context);
+        $htmlValidation = $this->htmlValidator->validate($renderedHtml);
+
+        if (!$htmlValidation['valid']) {
+            throw new \RuntimeException('HTML_VALIDATION:'.implode(' | ', $htmlValidation['errors']));
+        }
+
+        $pdfBinary = $this->documentBuilder->buildFromHtml($renderedHtml, [
+            'paper_size' => $paperSize,
+            'orientation' => $orientation,
+        ]);
+
+        return [
+            'html' => $renderedHtml,
+            'pdf' => $pdfBinary,
+        ];
     }
 
     /**

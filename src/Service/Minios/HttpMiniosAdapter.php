@@ -2,11 +2,15 @@
 
 namespace App\Service\Minios;
 
-use Symfony\Contracts\HttpClient\HttpClientInterface;
-use Throwable;
+use Aws\Credentials\Credentials;
+use Aws\Exception\AwsException;
+use Aws\S3\S3Client;
 
 final class HttpMiniosAdapter implements MiniosAdapterInterface
 {
+    private S3Client $internalClient;
+    private S3Client $publicClient;
+
     public function __construct(
         private readonly string $minioEndpoint,
         private readonly string $minioPublicEndpoint,
@@ -16,16 +20,42 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
         private readonly string $minioSecretKey,
         private readonly bool $minioUsePathStyle,
         private readonly bool $minioVerifySsl,
-        private readonly HttpClientInterface $httpClient,
-    ) {}
+    ) {
+        $this->internalClient = $this->createClient($this->minioEndpoint);
+        $this->publicClient = $this->createClient($this->minioPublicEndpoint);
+    }
 
     public function putObject(string $bucket, string $objectKey, string $content, string $contentType = 'application/pdf'): array
     {
         $bucketName = $bucket !== '' ? $bucket : $this->minioBucket;
 
-        $url = $this->buildObjectUrl($this->minioEndpoint, $bucketName, $objectKey);
+        try {
+            $result = $this->internalClient->putObject([
+                'Bucket' => $bucketName,
+                'Key' => $objectKey,
+                'Body' => $content,
+                'ContentType' => $contentType,
+            ]);
 
-        return $this->sendSignedRequest('PUT', $url, $content, $contentType);
+            return [
+                'ok' => true,
+                'status_code' => 200,
+                'body' => [
+                    'etag' => (string) ($result['ETag'] ?? ''),
+                    'bucket' => $bucketName,
+                    'key' => $objectKey,
+                ],
+            ];
+        } catch (AwsException $exception) {
+            return [
+                'ok' => false,
+                'status_code' => 502,
+                'body' => [
+                    'error' => 'No fue posible guardar el archivo en MinIO/S3.',
+                    'details' => $exception->getAwsErrorMessage() ?: $exception->getMessage(),
+                ],
+            ];
+        }
     }
 
     public function temporaryObjectUrl(string $bucket, string $objectKey, int $expiresInHours): string
@@ -33,282 +63,60 @@ final class HttpMiniosAdapter implements MiniosAdapterInterface
         $bucketName = $bucket !== '' ? $bucket : $this->minioBucket;
         $expiresInSeconds = max(1, $expiresInHours) * 3600;
 
-        return $this->buildPresignedGetUrl($this->minioPublicEndpoint, $bucketName, $objectKey, $expiresInSeconds);
+        $command = $this->publicClient->getCommand('GetObject', [
+            'Bucket' => $bucketName,
+            'Key' => $objectKey,
+        ]);
+
+        $request = $this->publicClient->createPresignedRequest($command, sprintf('+%d seconds', $expiresInSeconds));
+
+        return (string) $request->getUri();
     }
 
     public function downloadObject(string $bucket, string $objectKey): array
     {
         $bucketName = $bucket !== '' ? $bucket : $this->minioBucket;
-        $url = $this->buildPresignedGetUrl($this->minioPublicEndpoint, $bucketName, $objectKey, 300);
 
         try {
-            $response = $this->httpClient->request('GET', $url, [
-                'verify_peer' => $this->minioVerifySsl,
-                'verify_host' => $this->minioVerifySsl,
+            $result = $this->publicClient->getObject([
+                'Bucket' => $bucketName,
+                'Key' => $objectKey,
             ]);
 
-            $statusCode = $response->getStatusCode();
-            $headers = $response->getHeaders(false);
-            $content = $response->getContent(false);
-
-            if ($statusCode < 200 || $statusCode >= 300) {
-                return $this->normalizeResponse($statusCode, $headers, $content);
-            }
+            $body = isset($result['Body']) ? (string) $result['Body'] : '';
 
             return [
                 'ok' => true,
-                'status_code' => $statusCode,
-                'headers' => $headers,
-                'body' => $content,
-                'content_type' => $headers['content-type'][0] ?? 'application/pdf',
+                'status_code' => 200,
+                'headers' => [
+                    'content-type' => [(string) ($result['ContentType'] ?? 'application/pdf')],
+                ],
+                'body' => $body,
+                'content_type' => (string) ($result['ContentType'] ?? 'application/pdf'),
             ];
-        } catch (Throwable $e) {
+        } catch (AwsException $exception) {
             return [
                 'ok' => false,
                 'status_code' => 502,
                 'body' => [
-                    'error' => 'No fue posible descargar el PDF desde MinIO/S3.',
-                    'details' => $e->getMessage(),
+                    'error' => 'No fue posible descargar el archivo desde MinIO/S3.',
+                    'details' => $exception->getAwsErrorMessage() ?: $exception->getMessage(),
                 ],
             ];
         }
     }
 
-    private function buildObjectUrl(string $baseUrl, string $bucket, string $objectKey): string
+    private function createClient(string $endpoint): S3Client
     {
-        $parsed = parse_url($baseUrl);
-        $scheme = $parsed['scheme'] ?? 'http';
-        $host = $parsed['host'] ?? '';
-        $port = isset($parsed['port']) ? ':' . $parsed['port'] : '';
-        $path = rtrim($parsed['path'] ?? '', '/');
-
-        $encodedKey = implode('/', array_map('rawurlencode', array_filter(explode('/', $objectKey), 'strlen')));
-
-        if ($this->minioUsePathStyle) {
-            return sprintf('%s://%s%s%s/%s/%s', $scheme, $host, $port, $path, rawurlencode($bucket), $encodedKey);
-        }
-
-        // Virtual-hosted style
-        return sprintf('%s://%s.%s%s%s/%s', $scheme, rawurlencode($bucket), $host, $port, $path, $encodedKey);
-    }
-
-    private function buildPresignedGetUrl(string $baseUrl, string $bucket, string $objectKey, int $expiresInSeconds): string
-    {
-        $parsed = parse_url($baseUrl);
-        $scheme = $parsed['scheme'] ?? 'http';
-        $host = $parsed['host'] ?? '';
-        $port = isset($parsed['port']) ? ':' . $parsed['port'] : '';
-        $basePath = rtrim($parsed['path'] ?? '', '/');
-
-        $encodedKey = implode('/', array_map('rawurlencode', array_filter(explode('/', $objectKey), 'strlen')));
-
-        if ($this->minioUsePathStyle) {
-            $canonicalUri = $basePath . '/' . rawurlencode($bucket) . ($encodedKey !== '' ? '/' . $encodedKey : '');
-            $requestHost = $host . $port;
-        } else {
-            $canonicalUri = $basePath . '/' . $encodedKey;
-            $requestHost = rawurlencode($bucket) . '.' . $host . $port;
-        }
-
-        $amzDate = gmdate('Ymd\THis\Z');
-        $dateScope = gmdate('Ymd');
-        $credentialScope = $dateScope . '/' . $this->minioRegion . '/s3/aws4_request';
-        $signedHeaders = 'host';
-
-        $queryParams = [
-            'X-Amz-Algorithm' => 'AWS4-HMAC-SHA256',
-            'X-Amz-Credential' => $this->minioAccessKey . '/' . $credentialScope,
-            'X-Amz-Date' => $amzDate,
-            'X-Amz-Expires' => (string) $expiresInSeconds,
-            'X-Amz-SignedHeaders' => $signedHeaders,
-        ];
-
-        $canonicalQueryString = $this->buildCanonicalQueryString($queryParams);
-        $canonicalHeaders = 'host:' . $requestHost . "\n";
-
-        $canonicalRequest = implode("\n", [
-            'GET',
-            $this->encodePath($canonicalUri),
-            $canonicalQueryString,
-            $canonicalHeaders,
-            $signedHeaders,
-            'UNSIGNED-PAYLOAD',
+        return new S3Client([
+            'version' => 'latest',
+            'region' => $this->minioRegion,
+            'endpoint' => $endpoint,
+            'use_path_style_endpoint' => $this->minioUsePathStyle,
+            'credentials' => new Credentials($this->minioAccessKey, $this->minioSecretKey),
+            'http' => [
+                'verify' => $this->minioVerifySsl,
+            ],
         ]);
-
-        $stringToSign = implode("\n", [
-            'AWS4-HMAC-SHA256',
-            $amzDate,
-            $credentialScope,
-            hash('sha256', $canonicalRequest),
-        ]);
-
-        $signatureKey = $this->getSignatureKey($this->minioSecretKey, $dateScope, $this->minioRegion, 's3');
-        $signature = hash_hmac('sha256', $stringToSign, $signatureKey);
-
-        $queryParams['X-Amz-Signature'] = $signature;
-
-        return sprintf('%s://%s%s?%s', $scheme, $requestHost, $canonicalUri, http_build_query($queryParams, '', '&', PHP_QUERY_RFC3986));
-    }
-
-    private function sendSignedRequest(string $method, string $url, string $content, string $contentType, bool $includePayload = true): array
-    {
-        $payloadHash = hash('sha256', $content);
-        $amzDate = gmdate('Ymd\THis\Z');
-        $dateScope = gmdate('Ymd');
-
-        $parsedUrl = parse_url($url);
-        $host = $parsedUrl['host'] ?? '';
-        if (isset($parsedUrl['port'])) {
-            $host .= ':' . $parsedUrl['port'];
-        }
-        $path = $parsedUrl['path'] ?? '/';
-
-        $headers = [
-            'content-type' => $contentType,
-            'host' => $host,
-            'x-amz-content-sha256' => $includePayload ? $payloadHash : hash('sha256', ''),
-            'x-amz-date' => $amzDate,
-        ];
-
-        $authorization = $this->buildAuthorizationHeader(
-            $method,
-            $path,
-            '',
-            $headers,
-            $includePayload ? $payloadHash : hash('sha256', ''),
-            $amzDate,
-            $dateScope
-        );
-
-        $headers['Authorization'] = $authorization;
-        try {
-            $response = $this->httpClient->request($method, $url, [
-                'headers' => $headers,
-                'body' => $includePayload ? $content : null,
-                'verify_peer' => $this->minioVerifySsl,
-                'verify_host' => $this->minioVerifySsl,
-            ]);
-
-            $statusCode = $response->getStatusCode();
-            $responseHeaders = $response->getHeaders(false);
-            $responseBody = $response->getContent(false);
-
-            return $this->normalizeResponse($statusCode, $responseHeaders, $responseBody);
-        } catch (Throwable $e) {
-            return [
-                'ok' => false,
-                'status_code' => 502,
-                'body' => [
-                    'error' => 'No fue posible conectar con MinIO/S3.',
-                    'details' => $e->getMessage(),
-                ],
-            ];
-        }
-    }
-
-    private function buildAuthorizationHeader(
-        string $method,
-        string $canonicalUri,
-        string $canonicalQueryString,
-        array $headers,
-        string $payloadHash,
-        string $amzDate,
-        string $dateScope,
-    ): string {
-        ksort($headers);
-
-        $canonicalHeaders = '';
-        $signedHeaders = [];
-
-        foreach ($headers as $name => $value) {
-            $normalizedName = strtolower(trim((string) $name));
-            $normalizedValue = trim((string) $value);
-            $canonicalHeaders .= $normalizedName . ':' . $normalizedValue . "\n";
-            $signedHeaders[] = $normalizedName;
-        }
-
-        $signedHeadersString = implode(';', $signedHeaders);
-        $canonicalRequest = implode("\n", [
-            $method,
-            $this->encodePath($canonicalUri),
-            $canonicalQueryString,
-            $canonicalHeaders,
-            $signedHeadersString,
-            $payloadHash,
-        ]);
-
-        $credentialScope = $dateScope . '/' . $this->minioRegion . '/s3/aws4_request';
-        $stringToSign = implode("\n", [
-            'AWS4-HMAC-SHA256',
-            $amzDate,
-            $credentialScope,
-            hash('sha256', $canonicalRequest),
-        ]);
-
-        $signingKey = $this->getSignatureKey($this->minioSecretKey, $dateScope, $this->minioRegion, 's3');
-        $signature = hash_hmac('sha256', $stringToSign, $signingKey);
-
-        return sprintf(
-            'AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s',
-            $this->minioAccessKey,
-            $credentialScope,
-            $signedHeadersString,
-            $signature
-        );
-    }
-
-    private function encodePath(string $path): string
-    {
-        $segments = explode('/', ltrim($path, '/'));
-        return '/' . implode('/', array_map('rawurlencode', $segments));
-    }
-
-    private function getSignatureKey(string $key, string $dateStamp, string $regionName, string $serviceName): string
-    {
-        $kDate = hash_hmac('sha256', $dateStamp, 'AWS4' . $key, true);
-        $kRegion = hash_hmac('sha256', $regionName, $kDate, true);
-        $kService = hash_hmac('sha256', $serviceName, $kRegion, true);
-
-        return hash_hmac('sha256', 'aws4_request', $kService, true);
-    }
-
-    private function normalizeResponse(int $statusCode, array $responseHeaders, string $responseBody): array
-    {
-        $body = [];
-
-        if ($responseBody !== '') {
-            libxml_use_internal_errors(true);
-            $xml = simplexml_load_string($responseBody);
-
-            if ($xml !== false) {
-                // S3 y Minio envían la estructura de error como XML
-                $body = json_decode((string) json_encode($xml), true);
-            } else {
-                $body = [
-                    'raw_preview' => substr($responseBody, 0, 500),
-                    'raw_length' => strlen($responseBody),
-                ];
-            }
-            libxml_clear_errors();
-        }
-
-        return [
-            'ok' => $statusCode >= 200 && $statusCode < 300,
-            'status_code' => $statusCode,
-            'headers' => $responseHeaders,
-            'body' => $body,
-        ];
-    }
-
-    private function buildCanonicalQueryString(array $queryParams): string
-    {
-        ksort($queryParams);
-        $parts = [];
-
-        foreach ($queryParams as $key => $value) {
-            $parts[] = rawurlencode((string) $key) . '=' . rawurlencode((string) $value);
-        }
-
-        return implode('&', $parts);
     }
 }
